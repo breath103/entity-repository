@@ -12,13 +12,11 @@
     }
   },
   "files": [
-    "dist",
-    "src"
+    "dist"
   ],
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
-    "prepare": "npm run build",
     "prepublishOnly": "npm run clean && npm run build"
   },
   "keywords": [
