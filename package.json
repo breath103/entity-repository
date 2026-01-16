@@ -1,0 +1,56 @@
+{
+  "name": "entity-repository",
+  "version": "0.1.0",
+  "description": "Type-safe entity caching and state management with RxJS and React",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "keywords": [
+    "entity",
+    "repository",
+    "cache",
+    "rxjs",
+    "react",
+    "state-management",
+    "typescript"
+  ],
+  "author": "Kurt Lee",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/breath103/entity-repository.git"
+  },
+  "homepage": "https://github.com/breath103/entity-repository#readme",
+  "bugs": {
+    "url": "https://github.com/breath103/entity-repository/issues"
+  },
+  "dependencies": {
+    "rxjs": "^7.8.1"
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.8",
+    "typescript": "^5.9.3"
+  }
+}
