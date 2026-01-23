@@ -1,4 +1,4 @@
-import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 
 import { combineLatest, map, type Observable } from "rxjs";
 
@@ -34,18 +34,23 @@ export function createRepositoryContext<
     return context;
   }
 
-  function useSubscribedState<Value>(observable: Observable<Value>, initialValue: Value) {
-    const [state, setState] = useState(initialValue);
+  function useSubscribedState<Value>(observable: Observable<Value>, getSnapshot: () => Value) {
+    const snapshotRef = useRef<Value>(getSnapshot());
 
-    useEffect(() => {
-      const subscription = observable.subscribe((value) => {
-        setState(value);
-      });
+    const subscribe = useCallback(
+      (callback: () => void) => {
+        const subscription = observable.subscribe((value) => {
+          snapshotRef.current = value;
+          callback();
+        });
+        return () => subscription.unsubscribe();
+      },
+      [observable],
+    );
 
-      return () => subscription.unsubscribe();
-    }, [observable]);
+    const getSnapshotStable = useCallback(() => snapshotRef.current, []);
 
-    return state;
+    return useSyncExternalStore(subscribe, getSnapshotStable);
   }
 
   /**
@@ -66,7 +71,7 @@ export function createRepositoryContext<
       [repository, JSON.stringify(id)],
     );
 
-    return useSubscribedState(recordQuery.$state, recordQuery.$state.value);
+    return useSubscribedState(recordQuery.$state, () => recordQuery.$state.value);
   }
 
   /**
@@ -99,7 +104,7 @@ export function createRepositoryContext<
       [listQuery],
     );
 
-    return useSubscribedState($state, { records: listQuery.$records.value, ...listQuery.$status.value });
+    return useSubscribedState($state, () => ({ records: listQuery.$records.value, ...listQuery.$status.value }));
   }
 
   return {
