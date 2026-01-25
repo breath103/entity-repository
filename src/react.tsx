@@ -62,7 +62,7 @@ export function createRepositoryContext<
   function useRepositoryQuery<Table extends keyof Definitions>(
     table: Table,
     id: EntityIdTuple<Definitions, Config, Table>,
-    fetcher: (id: EntityIdTuple<Definitions, Config, Table>) => Promise<Definitions[Table]>,
+    fetcher: (id: EntityIdTuple<Definitions, Config, Table>) => Promise<Definitions[Table] | null>,
   ): RepositoryQuery<Definitions[Table]> {
     const repository = useRepository();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- table/fetcher intentionally ignored
