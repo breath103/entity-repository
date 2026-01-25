@@ -18,13 +18,13 @@ export class RecordQuery<
   private repository: Repository<Definitions, Config>;
   private table: Table;
   private id: EntityIdTuple<Definitions, Config, Table>;
-  private fetcher: (id: EntityIdTuple<Definitions, Config, Table>) => Promise<Definitions[Table]>;
+  private fetcher: (id: EntityIdTuple<Definitions, Config, Table>) => Promise<Definitions[Table] | null>;
 
   constructor(
     repository: Repository<Definitions, Config>,
     table: Table,
     id: EntityIdTuple<Definitions, Config, Table>,
-    fetcher: (id: EntityIdTuple<Definitions, Config, Table>) => Promise<Definitions[Table]>,
+    fetcher: (id: EntityIdTuple<Definitions, Config, Table>) => Promise<Definitions[Table] | null>,
   ) {
     this.repository = repository;
     this.table = table;

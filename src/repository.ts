@@ -13,7 +13,7 @@ import { RecordQuery } from "./record-query";
 type TableStore<Entity> = {
   records: Map<string, Entity>;
   subjects: Map<string, BehaviorSubject<Entity | null>>;
-  inflight: Map<string, Promise<Entity>>;
+  inflight: Map<string, Promise<Entity | null>>;
   events$: Subject<EntityEvent<Entity>>;
 };
 
@@ -94,8 +94,8 @@ export class Repository<
   async fetch<Table extends keyof Definitions>(
     table: Table,
     id: EntityIdTuple<Definitions, Config, Table>,
-    fetcher: (id: EntityIdTuple<Definitions, Config, Table>) => Promise<Definitions[Table]>,
-  ): Promise<Definitions[Table]> {
+    fetcher: (id: EntityIdTuple<Definitions, Config, Table>) => Promise<Definitions[Table] | null>,
+  ): Promise<Definitions[Table] | null> {
     const store = this.getStore(table);
     const cacheKey = this.getCacheKeyFromId(table, id);
     const record = store.records.get(cacheKey);
@@ -106,12 +106,14 @@ export class Repository<
 
     const inflight = store.inflight.get(cacheKey);
     if (inflight) {
-      return inflight as Promise<Definitions[Table]>;
+      return inflight as Promise<Definitions[Table] | null>;
     }
 
     const request = (async () => {
       const value = await fetcher(id);
-      this.set(table, value);
+      if (value !== null) {
+        this.set(table, value);
+      }
       return value;
     })();
 
@@ -151,7 +153,7 @@ export class Repository<
   recordQuery<Table extends keyof Definitions>(
     table: Table,
     id: EntityIdTuple<Definitions, Config, Table>,
-    fetcher: (id: EntityIdTuple<Definitions, Config, Table>) => Promise<Definitions[Table]>,
+    fetcher: (id: EntityIdTuple<Definitions, Config, Table>) => Promise<Definitions[Table] | null>,
   ): RecordQuery<Definitions, Config, Table> {
     return new RecordQuery(this, table, id, fetcher);
   }
