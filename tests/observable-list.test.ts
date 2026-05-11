@@ -124,6 +124,23 @@ describe("Repository.observableList", () => {
     assert.equal(seen.length, 1); // no further emissions
   });
 
+  it("multiSet bulk-upserts and emits one event per record", () => {
+    const repo = newRepo();
+    const seen: Tag[][] = [];
+    const sub = repo
+      .observableList("tags", { order: (a, b) => a.id - b.id })
+      .subscribe((v) => { seen.push(v); });
+    repo.multiSet("tags", [
+      { id: 1, task_id: "t-1", value: "a" },
+      { id: 2, task_id: "t-1", value: "b" },
+      { id: 3, task_id: "t-2", value: "c" },
+    ]);
+    // 1 initial empty + 3 inserts = 4 emissions
+    assert.equal(seen.length, 4);
+    assert.deepEqual(seen[seen.length - 1].map((t) => t.id), [1, 2, 3]);
+    sub.unsubscribe();
+  });
+
   it("two subscribers see independent snapshots; the second sees pre-existing records on subscribe", () => {
     const repo = newRepo();
     repo.set("tags", { id: 1, task_id: "t-1", value: "alice" });

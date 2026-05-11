@@ -28,6 +28,17 @@ export class Repository<
     this.config = config;
   }
 
+  /**
+   * Bulk upsert. Equivalent to calling `set` for every entity, but cheaper
+   * than a `for` loop at the callsite when seeding many records at once
+   * (e.g. when one fetch returns hundreds of related rows). Each entity
+   * still fires its own insert/update event so subscribers see the
+   * progression — the savings are in callsite ergonomics, not event volume.
+   */
+  multiSet<Table extends keyof Definitions>(table: Table, entities: readonly Definitions[Table][]) {
+    for (const entity of entities) this.set(table, entity);
+  }
+
   set<Table extends keyof Definitions>(table: Table, entity: Definitions[Table]) {
     const store = this.getStore(table);
     const cacheKey = this.getCacheKeyFromEntity(table, entity);
