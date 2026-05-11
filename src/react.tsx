@@ -75,6 +75,40 @@ export function createRepositoryContext<
   }
 
   /**
+   * Subscribes to a filtered/ordered observable view of the cache. Reads the
+   * current matching snapshot on mount, then re-emits whenever an
+   * insert/update/delete on the table changes the matching set. Unlike
+   * useRepositoryListQuery, there's no fetcher — this hook is the
+   * cold-start-safe read for data that's seeded elsewhere (typically by a
+   * sibling listQuery).
+   *
+   * `key` keys the memoization (use any value derived from the filter
+   * inputs, e.g. a task id).
+   */
+  function useObservableList<Table extends keyof Definitions, Key>(
+    table: Table,
+    key: Key,
+    options: ListQueryOptions<Definitions[Table]>,
+  ): Definitions[Table][] {
+    const repository = useRepository();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- table/options intentionally ignored (stable for a given key)
+    const observable = useMemo(
+      () => repository.observableList(table, options),
+      [repository, JSON.stringify(key)],
+    );
+    return useSubscribedState(observable, () => {
+      // Pull the current snapshot via a synchronous one-shot subscribe.
+      // observableList emits its first value synchronously.
+      let snapshot: Definitions[Table][] = [];
+      const sub = observable.subscribe((value) => {
+        snapshot = value;
+      });
+      sub.unsubscribe();
+      return snapshot;
+    });
+  }
+
+  /**
    * Subscribes to a list query keyed only by `param`.
    *
    * NOTE: `options` and `fetcher` changes are intentionally ignored so the
@@ -112,6 +146,7 @@ export function createRepositoryContext<
     useRepository,
     useRepositoryQuery,
     useRepositoryListQuery,
+    useObservableList,
     useSubscribedState,
   };
 }

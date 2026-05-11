@@ -1,4 +1,4 @@
-import { BehaviorSubject, Subject } from "rxjs";
+import { BehaviorSubject, Observable, Subject } from "rxjs";
 
 import type {
   EntityConfig,
@@ -148,6 +148,77 @@ export class Repository<
   getEvents<Table extends keyof Definitions>(table: Table): Subject<EntityEvent<Definitions[Table]>> {
     const store = this.getStore(table);
     return store.events$ as Subject<EntityEvent<Definitions[Table]>>;
+  }
+
+  /**
+   * Observable view of the cache for `table`, optionally filtered and
+   * ordered. On subscribe, emits the current matching snapshot
+   * synchronously (no cold-start race against a non-replaying event
+   * Subject), then emits a new array whenever an insert/update/delete on
+   * the table changes the matching set.
+   *
+   * Use this when a subscriber needs to mount AFTER the data may already
+   * have been seeded — e.g. a per-row tag query mounted when the parent
+   * task row renders, where the parent's fetch already filled the cache.
+   *
+   * Returned arrays are immutable snapshots — each emission is a fresh
+   * array, so React subscribers can compare by reference.
+   */
+  observableList<Table extends keyof Definitions>(
+    table: Table,
+    options: ListQueryOptions<Definitions[Table]> = {},
+  ): Observable<Definitions[Table][]> {
+    const store = this.getStore(table);
+    const filterFn = options.filter ?? (() => true);
+    const orderFn = options.order ?? null;
+    const applyOrder = (records: Definitions[Table][]): Definitions[Table][] =>
+      orderFn ? [...records].sort(orderFn) : records;
+
+    return new Observable<Definitions[Table][]>((subscriber) => {
+      let current = applyOrder(Array.from(store.records.values()).filter(filterFn));
+      subscriber.next(current);
+
+      const eventsSub = store.events$.subscribe((event) => {
+        switch (event.type) {
+          case "insert":
+          case "update": {
+            const passes = filterFn(event.new);
+            const key = this.getEntityKey(table, event.new);
+            const index = current.findIndex(
+              (record) => this.getEntityKey(table, record) === key,
+            );
+            if (!passes) {
+              if (index === -1) return;
+              const next = current.slice();
+              next.splice(index, 1);
+              current = applyOrder(next);
+              subscriber.next(current);
+              return;
+            }
+            const next = current.slice();
+            if (index === -1) next.push(event.new);
+            else next[index] = event.new;
+            current = applyOrder(next);
+            subscriber.next(current);
+            return;
+          }
+          case "delete": {
+            const key = this.getEntityKey(table, event.old);
+            const index = current.findIndex(
+              (record) => this.getEntityKey(table, record) === key,
+            );
+            if (index === -1) return;
+            const next = current.slice();
+            next.splice(index, 1);
+            current = applyOrder(next);
+            subscriber.next(current);
+            return;
+          }
+        }
+      });
+
+      return () => eventsSub.unsubscribe();
+    });
   }
 
   recordQuery<Table extends keyof Definitions>(
