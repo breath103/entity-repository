@@ -1,6 +1,6 @@
 {
   "name": "entity-repository",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Type-safe entity caching and state management with RxJS and React",
   "type": "module",
   "main": "./dist/index.js",
@@ -54,6 +54,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/react": "^19.2.8",
+    "react": "^19.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.9.3"
   }
