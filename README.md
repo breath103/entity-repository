@@ -10,6 +10,8 @@ Type-safe entity caching and state management with RxJS observables and React in
 - **Query layer** - `RecordQuery` for single entities, `ListQuery` for filtered/sorted lists
 - **React integration** - Context provider and hooks for seamless React usage
 - **Request deduplication** - Prevents duplicate fetch requests for the same entity
+- **Write deduplication** - `set` skips the event when the record is deep-equal to what's cached
+- **Optimistic writes** - `RepositoryWriter` patches the cache first, serialises per-entity, and rolls back on failure
 - **Real-time event system** - Insert/update/delete events for reactive list updates
 
 ## Installation
@@ -267,13 +269,49 @@ const key = repository.getCacheKey("users", { id: "1" }); // "1"
 const key = repository.getEntityKey("users", { id: "1", name: "Alice", email: "..." }); // "1"
 ```
 
+### RepositoryWriter - Optimistic writes
+
+`RepositoryWriter` wraps a repository to apply optimistic mutations: it patches
+the local cache first, then fires the remote call, rolling the cache back if it
+fails. Operations on the same entity are serialised through a per-entity FIFO
+queue so rapid edits to one row reach the server in order.
+
+```typescript
+import { RepositoryWriter } from "entity-repository";
+
+const writer = new RepositoryWriter(repository);
+
+// Update: patch the cache now, PATCH the server, roll back on failure.
+writer.enqueueUpdate("users", { id: "1" }, {
+  local: (prev) => ({ ...prev, name: "Alice v2" }),
+  remote: async () => {
+    await api.patch(`/users/1`, { name: "Alice v2" });
+  },
+  onError: (err) => toast(err.message),
+});
+
+// Delete: remove from the cache now, DELETE on the server, restore on failure.
+writer.enqueueDelete("users", { id: "1" }, {
+  remote: async () => { await api.delete(`/users/1`); },
+});
+
+// Insert: non-optimistic — the cache is seeded from the server's response, so
+// the caller doesn't wait on a realtime echo to see the new row.
+const created = await writer.enqueueInsert("users", {
+  remote: () => api.post(`/users`, { name: "Bob" }),
+});
+```
+
+In a browser, the first writer installs a `beforeunload` guard that blocks tab
+close while any queue still has pending work.
+
 ## API Reference
 
 ### Repository
 
 | Method | Description |
 |--------|-------------|
-| `set(table, entity)` | Store entity in cache, emits insert/update event |
+| `set(table, entity)` | Store entity in cache, emits insert/update event (skipped when deep-equal to the cached record) |
 | `get(table, id)` | Get cached entity or null |
 | `del(table, id)` | Remove entity from cache, emits delete event |
 | `fetch(table, id, fetcher)` | Get cached or fetch, deduplicates concurrent requests |
@@ -304,6 +342,16 @@ Manages list queries with filter/sort and real-time updates.
 | `$status` | `BehaviorSubject<{ status, error? }>` - subscribe to status |
 | `refetch()` | Manually trigger refetch, returns records |
 | `dispose()` | Cleanup subscriptions |
+
+### RepositoryWriter
+
+Optimistic write wrapper around a repository.
+
+| Method | Description |
+|--------|-------------|
+| `enqueueUpdate(table, id, op)` | Optimistically patch the cache, then run `op.remote()`; roll back on failure |
+| `enqueueDelete(table, id, op)` | Optimistically remove from the cache, then run `op.remote()`; restore on failure |
+| `enqueueInsert(table, op)` | Run `op.remote()`, seed the cache from its result; returns the inserted entity |
 
 ### React Hooks
 
