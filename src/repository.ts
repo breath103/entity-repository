@@ -7,6 +7,8 @@ import type {
   EntityIdTuple,
   RepositoryConfig,
 } from "./types";
+import isEqual from "lodash.isequal";
+
 import { ListQuery, type ListQueryOptions } from "./list-query";
 import { RecordQuery } from "./record-query";
 
@@ -44,6 +46,13 @@ export class Repository<
     const cacheKey = this.getCacheKeyFromEntity(table, entity);
 
     const existing = store.records.get(cacheKey);
+    // Deep-equal short-circuit: a re-set with structurally identical data (a
+    // benign refetch, a realtime echo of a write the client already applied)
+    // would otherwise fire the per-id subject and the table's events$, waking
+    // every subscriber for no observable change. Skipping keeps the older
+    // reference cached, which is equal, so no consumer can tell the difference.
+    if (existing !== undefined && isEqual(existing, entity)) return;
+
     store.records.set(cacheKey, entity);
 
     if (existing) {
