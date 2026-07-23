@@ -22,94 +22,74 @@ function deferred<T = void>() {
 }
 
 describe("RepositoryWriter.enqueueUpdate", () => {
-  it("applies the optimistic patch immediately, then runs remote", async () => {
+  it("applies the optimistic patch synchronously, then resolves after remote lands", async () => {
     const { repo, writer } = setup();
     repo.set("tasks", { id: "t1", title: "old" });
 
-    const remoteRan = deferred();
-    const done = deferred();
-    writer.enqueueUpdate(
+    let remoteSawPatch = false;
+    const done = writer.enqueueUpdate(
       "tasks",
       { id: "t1" },
       {
         local: (prev) => ({ ...prev, title: "new" }),
         remote: async () => {
           // The optimistic patch is visible before remote resolves.
-          assert.equal(repo.get("tasks", { id: "t1" })?.title, "new");
-          remoteRan.resolve();
+          remoteSawPatch = repo.get("tasks", { id: "t1" })?.title === "new";
         },
-        onSuccess: () => done.resolve(),
       },
     );
 
-    // Optimistic patch is synchronous.
+    // Optimistic patch is synchronous — visible before awaiting the promise.
     assert.equal(repo.get("tasks", { id: "t1" })?.title, "new");
-    await remoteRan.promise;
-    await done.promise;
+    await done;
+    assert.ok(remoteSawPatch);
   });
 
-  it("rolls back to the pre-change snapshot and calls onError when remote throws", async () => {
+  it("rejects (after rolling back to the pre-change snapshot) when remote throws", async () => {
     const { repo, writer } = setup();
     repo.set("tasks", { id: "t1", title: "old" });
 
-    const errored = deferred<Error>();
-    writer.enqueueUpdate(
-      "tasks",
-      { id: "t1" },
-      {
-        local: (prev) => ({ ...prev, title: "new" }),
-        remote: async () => {
-          throw new Error("boom");
+    await assert.rejects(
+      writer.enqueueUpdate(
+        "tasks",
+        { id: "t1" },
+        {
+          local: (prev) => ({ ...prev, title: "new" }),
+          remote: async () => {
+            throw new Error("boom");
+          },
         },
-        onError: (err) => errored.resolve(err),
-      },
+      ),
+      /boom/,
     );
-
-    assert.equal(repo.get("tasks", { id: "t1" })?.title, "new");
-    const err = await errored.promise;
-    assert.equal(err.message, "boom");
     assert.equal(repo.get("tasks", { id: "t1" })?.title, "old");
   });
 });
 
 describe("RepositoryWriter.enqueueDelete", () => {
-  it("removes the row optimistically, then runs remote", async () => {
+  it("removes the row optimistically, then resolves after remote lands", async () => {
     const { repo, writer } = setup();
     repo.set("tasks", { id: "t1", title: "x" });
 
-    const done = deferred();
-    writer.enqueueDelete(
-      "tasks",
-      { id: "t1" },
-      {
-        remote: async () => {},
-        onSuccess: () => done.resolve(),
-      },
-    );
+    const done = writer.enqueueDelete("tasks", { id: "t1" }, { remote: async () => {} });
 
     assert.equal(repo.get("tasks", { id: "t1" }), null);
-    await done.promise;
+    await done;
     assert.equal(repo.get("tasks", { id: "t1" }), null);
   });
 
-  it("restores the row when remote throws", async () => {
+  it("restores the row and rejects when remote throws", async () => {
     const { repo, writer } = setup();
     repo.set("tasks", { id: "t1", title: "x" });
 
-    const errored = deferred<Error>();
-    writer.enqueueDelete(
-      "tasks",
-      { id: "t1" },
-      {
-        remote: async () => {
-          throw new Error("nope");
-        },
-        onError: (err) => errored.resolve(err),
+    const done = writer.enqueueDelete("tasks", { id: "t1" }, {
+      remote: async () => {
+        throw new Error("nope");
       },
-    );
+    });
 
     assert.equal(repo.get("tasks", { id: "t1" }), null);
-    await errored.promise;
+    await assert.rejects(done, /nope/);
     assert.deepEqual(repo.get("tasks", { id: "t1" }), { id: "t1", title: "x" });
   });
 });
@@ -124,21 +104,16 @@ describe("RepositoryWriter.enqueueInsert", () => {
     assert.deepEqual(repo.get("tasks", { id: "t9" }), { id: "t9", title: "server" });
   });
 
-  it("rejects and calls onError when remote throws", async () => {
+  it("rejects when remote throws", async () => {
     const { writer } = setup();
-    let seen: Error | null = null;
     await assert.rejects(
       writer.enqueueInsert("tasks", {
         remote: async () => {
           throw new Error("insert-fail");
         },
-        onError: (err) => {
-          seen = err;
-        },
       }),
       /insert-fail/,
     );
-    assert.equal((seen as Error | null)?.message, "insert-fail");
   });
 });
 
@@ -148,10 +123,9 @@ describe("RepositoryWriter serialisation", () => {
     repo.set("tasks", { id: "t1", title: "0" });
 
     const order: string[] = [];
-    const first = deferred();
     const gate = deferred();
 
-    writer.enqueueUpdate(
+    const first = writer.enqueueUpdate(
       "tasks",
       { id: "t1" },
       {
@@ -160,12 +134,10 @@ describe("RepositoryWriter serialisation", () => {
           await gate.promise; // hold the queue open
           order.push("first");
         },
-        onSuccess: () => first.resolve(),
       },
     );
 
-    const second = deferred();
-    writer.enqueueUpdate(
+    const second = writer.enqueueUpdate(
       "tasks",
       { id: "t1" },
       {
@@ -173,12 +145,11 @@ describe("RepositoryWriter serialisation", () => {
         remote: async () => {
           order.push("second");
         },
-        onSuccess: () => second.resolve(),
       },
     );
 
     gate.resolve();
-    await Promise.all([first.promise, second.promise]);
+    await Promise.all([first, second]);
     assert.deepEqual(order, ["first", "second"]);
     assert.equal(repo.get("tasks", { id: "t1" })?.title, "b");
   });

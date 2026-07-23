@@ -276,24 +276,32 @@ the local cache first, then fires the remote call, rolling the cache back if it
 fails. Operations on the same entity are serialised through a per-entity FIFO
 queue so rapid edits to one row reach the server in order.
 
+Every method returns a promise that resolves once `remote()` lands and rejects
+(after rollback) if it throws. `await` it when you need a loading / error state,
+or ignore it for pure fire-and-forget optimism.
+
 ```typescript
 import { RepositoryWriter } from "entity-repository";
 
 const writer = new RepositoryWriter(repository);
 
 // Update: patch the cache now, PATCH the server, roll back on failure.
+// Fire-and-forget — the cache reverts itself if the request fails.
 writer.enqueueUpdate("users", { id: "1" }, {
   local: (prev) => ({ ...prev, name: "Alice v2" }),
   remote: async () => {
     await api.patch(`/users/1`, { name: "Alice v2" });
   },
-  onError: (err) => toast(err.message),
 });
 
-// Delete: remove from the cache now, DELETE on the server, restore on failure.
-writer.enqueueDelete("users", { id: "1" }, {
-  remote: async () => { await api.delete(`/users/1`); },
-});
+// Or await it to drive a loading / error state:
+try {
+  await writer.enqueueDelete("users", { id: "1" }, {
+    remote: async () => { await api.delete(`/users/1`); },
+  });
+} catch (err) {
+  toast(err.message); // the cache was already rolled back
+}
 
 // Insert: non-optimistic — the cache is seeded from the server's response, so
 // the caller doesn't wait on a realtime echo to see the new row.
@@ -349,9 +357,9 @@ Optimistic write wrapper around a repository.
 
 | Method | Description |
 |--------|-------------|
-| `enqueueUpdate(table, id, op)` | Optimistically patch the cache, then run `op.remote()`; roll back on failure |
-| `enqueueDelete(table, id, op)` | Optimistically remove from the cache, then run `op.remote()`; restore on failure |
-| `enqueueInsert(table, op)` | Run `op.remote()`, seed the cache from its result; returns the inserted entity |
+| `enqueueUpdate(table, id, op)` | Optimistically patch the cache, then run `op.remote()`; roll back on failure. Returns `Promise<void>` |
+| `enqueueDelete(table, id, op)` | Optimistically remove from the cache, then run `op.remote()`; restore on failure. Returns `Promise<void>` |
+| `enqueueInsert(table, op)` | Run `op.remote()`, seed the cache from its result; returns `Promise` of the inserted entity |
 
 ### React Hooks
 

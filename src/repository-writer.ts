@@ -6,7 +6,11 @@ import type { Repository } from "./repository";
  *
  * - `enqueueUpdate` / `enqueueDelete` patch the local cache **first**, then
  *   fire the `remote()` callback. On failure they roll the cache back to the
- *   pre-change state and invoke `onError`.
+ *   pre-change state.
+ * - Every method returns a promise that resolves once `remote()` lands and
+ *   rejects (after rollback) if it throws — `await` it when you need a
+ *   loading / error state, or ignore it for pure fire-and-forget optimism.
+ *   The optional `onSuccess` / `onError` callbacks still fire alongside it.
  * - All ops for the same entity are serialised through a per-entity FIFO
  *   queue so two rapid edits to the same row hit the server in order.
  * - Mounting a writer installs a `beforeunload` guard (when a DOM is present)
@@ -16,14 +20,12 @@ import type { Repository } from "./repository";
 interface QueueItem {
   remote: () => Promise<void>;
   rollback?: () => void;
-  onSuccess?: () => void;
-  onError?: (error: Error) => void;
+  onSuccess: () => void;
+  onError: (error: Error) => void;
 }
 
 interface DeleteOperation {
   remote: () => Promise<void>;
-  onSuccess?: () => void;
-  onError?: (error: Error) => void;
 }
 
 export class RepositoryWriter<E extends EntityDefinitions, C extends EntityConfig<E>> {
@@ -42,11 +44,9 @@ export class RepositoryWriter<E extends EntityDefinitions, C extends EntityConfi
     op: {
       remote: () => Promise<void>;
       local?: (prev: E[Table]) => E[Table];
-      onSuccess?: () => void;
-      onError?: (error: Error) => void;
     },
-  ): void {
-    this.enqueueOptimistic(table, id, op, (prev) => {
+  ): Promise<void> {
+    return this.enqueueOptimistic(table, id, op, (prev) => {
       if (op.local && prev) this.repository.set(table, op.local(prev));
     });
   }
@@ -55,32 +55,30 @@ export class RepositoryWriter<E extends EntityDefinitions, C extends EntityConfi
     table: Table,
     id: EntityIdTuple<E, C, Table>,
     op: DeleteOperation,
-  ): void {
-    this.enqueueOptimistic(table, id, op, (prev) => {
+  ): Promise<void> {
+    return this.enqueueOptimistic(table, id, op, (prev) => {
       if (prev) this.repository.del(table, id);
     });
   }
 
   // Snapshot the cache, apply the caller's optimistic mutation, then enqueue the
   // remote call with a rollback that restores the snapshot on failure. The only
-  // thing update vs delete differ on is `applyLocal`.
+  // thing update vs delete differ on is `applyLocal`. The returned promise
+  // resolves when remote() lands and rejects (after rollback) if it throws.
   private enqueueOptimistic<Table extends keyof E & string>(
     table: Table,
     id: EntityIdTuple<E, C, Table>,
     op: DeleteOperation,
     applyLocal: (prev: E[Table] | null) => void,
-  ): void {
+  ): Promise<void> {
     const entityKey = `${table}:${this.repository.getCacheKey(table, id)}`;
     const prevState = this.repository.get(table, id);
     applyLocal(prevState);
     const rollback = () => {
       if (prevState) this.repository.set(table, prevState);
     };
-    this.enqueue(entityKey, {
-      remote: op.remote,
-      rollback,
-      onSuccess: op.onSuccess,
-      onError: op.onError,
+    return new Promise<void>((resolve, reject) => {
+      this.enqueue(entityKey, { remote: op.remote, rollback, onSuccess: resolve, onError: reject });
     });
   }
 
@@ -91,7 +89,7 @@ export class RepositoryWriter<E extends EntityDefinitions, C extends EntityConfi
   // its own broadcast to see the new row.
   enqueueInsert<Table extends keyof E & string>(
     table: Table,
-    op: { remote: () => Promise<E[Table]>; onError?: (error: Error) => void },
+    op: { remote: () => Promise<E[Table]> },
   ): Promise<E[Table]> {
     return new Promise((resolve, reject) => {
       const entityKey = `${table}:insert:${++this.insertCounter}`;
@@ -101,10 +99,8 @@ export class RepositoryWriter<E extends EntityDefinitions, C extends EntityConfi
           this.repository.set(table, inserted);
           resolve(inserted);
         },
-        onError: (err) => {
-          op.onError?.(err);
-          reject(err);
-        },
+        onSuccess: () => {},
+        onError: reject,
       });
     });
   }
@@ -129,10 +125,10 @@ export class RepositoryWriter<E extends EntityDefinitions, C extends EntityConfi
       const item = queue[0];
       try {
         await item.remote();
-        item.onSuccess?.();
+        item.onSuccess();
       } catch (error) {
         item.rollback?.();
-        item.onError?.(error instanceof Error ? error : new Error(String(error)));
+        item.onError(error instanceof Error ? error : new Error(String(error)));
         console.error(`Failed to update ${entityKey}:`, error);
       }
       queue.shift();
