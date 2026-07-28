@@ -1,9 +1,10 @@
-import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { combineLatest, map, type Observable } from "rxjs";
 
+import { createEntityLoader as createLoader, type EntityLoader, type EntityLoaderOptions } from "./entity-loader";
 import type { ListQueryOptions, ListQueryState } from "./list-query";
-import type { EntityConfig, EntityDefinitions, EntityIdTuple, RepositoryConfig, RepositoryQuery } from "./types";
+import type { EntityConfig, EntityDefinitions, EntityIdTuple, EntityIdValue, RepositoryConfig, RepositoryQuery } from "./types";
 import { Repository } from "./repository";
 
 /**
@@ -78,6 +79,73 @@ export function createRepositoryContext<
   }
 
   /**
+   * A batched, deduped per-id loader for one table, bound to this repository.
+   * Declare one per table (module scope) and hand it to `useEntity`.
+   */
+  function createEntityLoader<Table extends keyof Definitions>(
+    table: Table,
+    batchFetch: (ids: EntityIdValue<Definitions, Config, Table>[]) => Promise<Definitions[Table][]>,
+    options?: EntityLoaderOptions,
+  ): EntityLoader<EntityIdValue<Definitions, Config, Table>> {
+    return createLoader(repository, config.entities[table].id, table, batchFetch, options);
+  }
+
+  /**
+   * Cache-first read of ONE entity: returns it straight from the repository when
+   * it's already there (seeded by a sibling list, realtime, or an earlier batch),
+   * and only on a miss asks `loader` for it — which coalesces that id with every
+   * other id missed in the same window into a single request.
+   *
+   * Omit `loader` for a cache-only subscription (something else is responsible for
+   * loading). This is the hook to reach for instead of `useRepositoryQuery` with a
+   * per-callsite fetcher, which has no way to batch or dedupe across callers.
+   */
+  function useEntity<Table extends keyof Definitions>(
+    table: Table,
+    id: EntityIdTuple<Definitions, Config, Table>,
+    loader?: EntityLoader<EntityIdValue<Definitions, Config, Table>>,
+  ): RepositoryQuery<Definitions[Table]> {
+    const observable = useMemo(
+      () => repository.getObservable(table, id),
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- table intentionally ignored; the observable is interned per id
+      [JSON.stringify(id)],
+    );
+    const entity = useSubscribedState(observable, () => observable.value);
+
+    const [status, setStatus] = useState<RepositoryQuery<Definitions[Table]>["status"] | "error">(
+      entity === null && loader ? "fetching" : "idle",
+    );
+    const [error, setError] = useState<Error | null>(null);
+
+    const idValue = id[config.entities[table].id] as EntityIdValue<Definitions, Config, Table>;
+    useEffect(() => {
+      if (!loader || repository.get(table, id) !== null) {
+        setStatus("idle");
+        return;
+      }
+      let live = true;
+      setStatus("fetching");
+      loader
+        .load(idValue)
+        .then(() => {
+          if (live) setStatus("idle");
+        })
+        .catch((e: unknown) => {
+          if (!live) return;
+          setError(e instanceof Error ? e : new Error(String(e)));
+          setStatus("error");
+        });
+      return () => {
+        live = false;
+      };
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- loader is stable (module scope); re-run per id only
+    }, [idValue]);
+
+    if (status === "error") return { entity, status, error: error ?? new Error("Entity load failed") };
+    return { entity, status };
+  }
+
+  /**
    * Subscribes to a filtered/ordered observable view of the cache. Reads the
    * current matching snapshot on mount, then re-emits whenever an
    * insert/update/delete on the table changes the matching set. Unlike
@@ -144,6 +212,8 @@ export function createRepositoryContext<
     repository,
     RepositoryProvider,
     useRepository,
+    createEntityLoader,
+    useEntity,
     useRepositoryQuery,
     useRepositoryListQuery,
     useObservableList,
