@@ -1,4 +1,5 @@
 export * from "./types";
+export * from "./entity-loader";
 export * from "./record-query";
 export * from "./list-query";
 export * from "./repository";

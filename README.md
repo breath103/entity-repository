@@ -141,6 +141,47 @@ function UserProfile({ userId }: { userId: string }) {
 }
 ```
 
+### createEntityLoader + useEntity - Batched, cache-first single-entity reads
+
+`useRepositoryQuery` takes a fetcher per callsite, so N components reading N ids fire
+N requests — and the usual "fix" (fall back to fetching the whole collection) is worse.
+`createEntityLoader` is a DataLoader over one table: a cache hit resolves with no
+request, a concurrent duplicate id reuses the in-flight promise, and everything else
+coalesces into ONE batch call.
+
+Declare the loader once per table at module scope, then read through `useEntity`:
+
+```typescript
+const usersLoader = createEntityLoader(
+  "users",
+  (ids) => fetch("/api/users/by-ids", {
+    method: "POST",
+    body: JSON.stringify({ ids }),
+  }).then((r) => r.json()),
+  // Optional: debounce so loads arriving on separate ticks merge too.
+  // Omit it and each synchronous render burst becomes one batch.
+  { debounceMs: 10 },
+);
+
+function UserName({ userId }: { userId: string }) {
+  const { entity: user, status } = useEntity("users", { id: userId }, usersLoader);
+
+  if (status === "error") return <div>Failed to load</div>;
+  if (!user) return <div>…</div>;
+  return <div>{user.name}</div>;
+}
+```
+
+Rendering 500 rows of `<UserName />` issues **one** request, not 500 — and rows whose
+user was already seeded (by a list fetch, a realtime event, an earlier batch) issue
+none. Because the reading component is also the loading component, no row depends on
+some sibling having fetched its data first.
+
+Omit the `loader` argument for a cache-only subscription, when something else owns
+loading. A batch that fails rejects every `load()` waiting on it, so `useEntity`
+reports `status: "error"` rather than rendering an empty entity forever; the ids are
+released so the next attempt retries them.
+
 ### useRepositoryListQuery - Entity lists with filter/sort
 
 ```typescript
@@ -366,7 +407,9 @@ Optimistic write wrapper around a repository.
 | Hook | Description |
 |------|-------------|
 | `useRepository()` | Access repository instance from context |
-| `useRepositoryQuery(table, id, fetcher)` | Subscribe to single entity query |
+| `createEntityLoader(table, batchFetch, options?)` | Build a batched, deduped per-id loader for one table (not a hook — call at module scope) |
+| `useEntity(table, id, loader?)` | Cache-first read of one entity; misses go through `loader`'s batch |
+| `useRepositoryQuery(table, id, fetcher)` | Subscribe to single entity query with a per-callsite fetcher |
 | `useRepositoryListQuery(table, param, options, fetcher)` | Subscribe to filtered/sorted list query |
 | `useSubscribedState(observable, initial)` | Subscribe to any RxJS observable |
 

@@ -17,6 +17,13 @@ export type EntityIdTuple<
   Table extends keyof Definitions,
 > = Pick<Definitions[Table], Config[Table]["id"]>;
 
+/** The bare id VALUE of a table's configured id column (what `EntityIdTuple` wraps). */
+export type EntityIdValue<
+  Definitions extends EntityDefinitions,
+  Config extends EntityConfig<Definitions>,
+  Table extends keyof Definitions,
+> = Definitions[Table][Config[Table]["id"]];
+
 export type EntityEvent<Entity> = {
   timestamp: Date;
 } & (
