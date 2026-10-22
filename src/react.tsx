@@ -1,4 +1,4 @@
-import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { createContext, ReactNode, useContext, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import { combineLatest, map, type Observable } from "rxjs";
 
@@ -39,23 +39,25 @@ export function createRepositoryContext<
     return useContext(RepositoryReactContext);
   }
 
+  // One store per observable, so the render that swaps in a new observable reads
+  // its value rather than the previous observable's.
   function useSubscribedState<Value>(observable: Observable<Value>, getSnapshot: () => Value) {
-    const snapshotRef = useRef<Value>(getSnapshot());
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getSnapshot reads `observable`
+    const store = useMemo(() => {
+      let snapshot = getSnapshot();
+      return {
+        subscribe: (callback: () => void) => {
+          const subscription = observable.subscribe((value) => {
+            snapshot = value;
+            callback();
+          });
+          return () => subscription.unsubscribe();
+        },
+        getSnapshot: () => snapshot,
+      };
+    }, [observable]);
 
-    const subscribe = useCallback(
-      (callback: () => void) => {
-        const subscription = observable.subscribe((value) => {
-          snapshotRef.current = value;
-          callback();
-        });
-        return () => subscription.unsubscribe();
-      },
-      [observable],
-    );
-
-    const getSnapshotStable = useCallback(() => snapshotRef.current, []);
-
-    return useSyncExternalStore(subscribe, getSnapshotStable);
+    return useSyncExternalStore(store.subscribe, store.getSnapshot);
   }
 
   /**
